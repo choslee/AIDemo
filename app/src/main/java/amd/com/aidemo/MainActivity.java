@@ -1,5 +1,6 @@
 package amd.com.aidemo;
 
+import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
@@ -24,6 +25,16 @@ import com.android.volley.toolbox.Volley;
 
 import org.json.JSONException;
 
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
 public class MainActivity extends AppCompatActivity {
 
     private EditText editTextIpAddress;
@@ -35,7 +46,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
+        handleSSLHandshake();
         editTextIpAddress = findViewById(R.id.editTextIpAddress);
         buttonConnect = findViewById(R.id.buttonConnect);
         sharedPreferences = getSharedPreferences("AppPrefs", MODE_PRIVATE);
@@ -47,6 +58,11 @@ public class MainActivity extends AppCompatActivity {
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
             return insets;
         });
+
+        // Set default IP address and enable the connect button by default
+        buttonConnect.setEnabled(true);
+        buttonConnect.setBackground(ContextCompat.getDrawable(this, R.drawable.button_background));
+        editTextIpAddress.setText("89.216.103.191:3000");
 
         editTextIpAddress.addTextChangedListener(new TextWatcher() {
             @Override
@@ -65,8 +81,7 @@ public class MainActivity extends AppCompatActivity {
 
         buttonConnect.setOnClickListener(v -> {
             String ipAddress = editTextIpAddress.getText().toString().trim();
-            connectToServer(ipAddress);
-            openChatActivity();
+            checkServerHealth(ipAddress);
         });
 
         viewModel.getIpAddress().observe(this, ipAddress -> {
@@ -80,36 +95,40 @@ public class MainActivity extends AppCompatActivity {
                 buttonConnect.setEnabled(enabled);
                 Drawable background = ContextCompat.getDrawable(this, enabled ? R.drawable.button_background : R.drawable.button_background_disabled);
                 buttonConnect.setBackground(background);
-
-
-//                buttonConnect.setBackgroundResource(enabled ? R.drawable.button_background : R.drawable.button_background_disabled);
             }
         });
+
+        // Check if the field is empty initially and set the button state
+        String initialIpAddress = editTextIpAddress.getText().toString().trim();
+        viewModel.setButtonEnabled(!initialIpAddress.isEmpty());
     }
 
-    private void connectToServer(String ipAddress) {
-        String url = "http://" + ipAddress + "/api/connect"; // Adjust the URL as needed
+    private void checkServerHealth(String ipAddress) {
+        String url = "https://" + ipAddress + "/health";
         RequestQueue queue = Volley.newRequestQueue(this);
 
         JsonObjectRequest jsonObjectRequest = new JsonObjectRequest(Request.Method.GET, url, null,
                 response -> {
                     try {
-                        String serverName = response.getString("nazivservera");
-                        savePreferences(ipAddress, serverName);
-                        openChatActivity();
+                        if ("ok".equals(response.getString("status"))) {
+                            savePreferences(ipAddress);
+                            Toast.makeText(MainActivity.this, "Connected to Adrenalin AI server", Toast.LENGTH_SHORT).show();
+                            openChatActivity();
+                        } else {
+                            Toast.makeText(MainActivity.this, "Error on checking server health", Toast.LENGTH_SHORT).show();
+                        }
                     } catch (JSONException e) {
                         e.printStackTrace();
                         Toast.makeText(MainActivity.this, "Error in response", Toast.LENGTH_SHORT).show();
                     }
-                }, error -> Toast.makeText(MainActivity.this, "Connection failed", Toast.LENGTH_SHORT).show());
+                }, error -> Toast.makeText(MainActivity.this, "Can't connect to the server, there is no response.", Toast.LENGTH_SHORT).show());
 
         queue.add(jsonObjectRequest);
     }
 
-    private void savePreferences(String ipAddress, String serverName) {
+    private void savePreferences(String ipAddress) {
         SharedPreferences.Editor editor = sharedPreferences.edit();
         editor.putString("ipAddress", ipAddress);
-        editor.putString("serverName", serverName);
         editor.apply();
     }
 
@@ -118,4 +137,34 @@ public class MainActivity extends AppCompatActivity {
         startActivity(intent);
         finish();
     }
+    @SuppressLint("TrulyRandom")
+    public static void handleSSLHandshake() {
+        try {
+            TrustManager[] trustAllCerts = new TrustManager[]{new X509TrustManager() {
+                public X509Certificate[] getAcceptedIssuers() {
+                    return new X509Certificate[0];
+                }
+
+                @Override
+                public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                }
+
+                @Override
+                public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                }
+            }};
+
+            SSLContext sc = SSLContext.getInstance("SSL");
+            sc.init(null, trustAllCerts, new SecureRandom());
+            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+            HttpsURLConnection.setDefaultHostnameVerifier(new HostnameVerifier() {
+                @Override
+                public boolean verify(String arg0, SSLSession arg1) {
+                    return true;
+                }
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
 }
